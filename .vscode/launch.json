@@ -7,7 +7,7 @@
             "program": "svn_to_git_migrator.py",
             "console": "integratedTerminal",
             "args": [
-                "https://svn.apache.org/repos/asf/subversion",
+                "https://svn.code.sf.net/p/tortoisesvn/code",
                 "/root/data/repo"
             ]
         }

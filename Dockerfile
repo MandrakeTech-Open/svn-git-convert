@@ -1,7 +1,7 @@
 FROM python:3-alpine
 
 RUN apk add git git-svn subversion bash \
-    && mkdir /root/data
+    && mkdir /workspace/data
 
-VOLUME [ "/root/data", "/root" ]
+VOLUME [ "/workspace/data", "/workspace" ]
 

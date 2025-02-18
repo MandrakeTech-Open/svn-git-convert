@@ -9,7 +9,7 @@
 		"docker-compose.yml"
 	],
 	"service": "git-svn-migrator",
-	"workspaceFolder": "/root",
+	"workspaceFolder": "/workspace",
 	"overrideCommand": true,
 	"customizations": {
 		"vscode": {

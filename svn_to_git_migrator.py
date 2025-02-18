@@ -6,6 +6,7 @@ import subprocess
 import hashlib
 import logging
 from typing import Dict, List
+from cache_manager import CacheManager
 
 # Configure logging
 logging.basicConfig(
@@ -15,6 +16,7 @@ logging.basicConfig(
 
 class SVNToGitMigrator:
     def __init__(self, svn_repo_url: str, git_repo_path: str):
+        self.cache_manager = CacheManager()
         """
         Initialize the SVN to Git migrator
 
@@ -32,6 +34,15 @@ class SVNToGitMigrator:
         """Get all SVN revisions with their metadata"""
         logging.info("Retrieving SVN revision history")
         cmd = ["svn", "log", "-v", self.svn_repo_url]
+        
+        # Try to get cached result
+        cache_key = self.cache_manager.get_cache_key(cmd)
+        cached_result = self.cache_manager.get_cached_result(cache_key)
+        if cached_result:
+            logging.info("Using cached SVN revision history")
+            return cached_result
+            
+        logging.info("No cached data found, querying SVN server")
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
@@ -48,6 +59,9 @@ class SVNToGitMigrator:
                 if line.strip() == "-" * 72 and current_revision:
                     revisions.append(current_revision)
                     current_revision = {}
+        
+        # Cache the parsed revisions
+        self.cache_manager.cache_result(cache_key, revisions)
         return revisions
 
     def _parse_svn_log_line(self, line: str, current_revision: Dict) -> Dict:
@@ -91,26 +105,12 @@ class SVNToGitMigrator:
             current_revision["message"] += line.strip() + "\n"
         return current_revision
 
-    def calculate_file_hash(self, file_path: str) -> str:
-        """Calculate SHA-256 hash of a file"""
-        logging.debug(f"Calculating SHA-256 hash for file: {file_path}")
-        sha256_hash = hashlib.sha256()
-        try:
-            with open(file_path, "rb") as f:
-                for byte_block in iter(lambda: f.read(4096), b""):
-                    sha256_hash.update(byte_block)
-            hash_result = sha256_hash.hexdigest()
-            logging.debug(f"Successfully calculated hash: {hash_result}")
-            return hash_result
-        except (IOError, OSError) as e:
-            logging.error(f"Failed to calculate hash for {file_path}: {str(e)}")
-            raise
-
-    def verify_file_content(self, svn_file: str, git_file: str) -> bool:
-        """Verify that file content matches between SVN and Git versions"""
-        logging.info(f"Verifying file content between SVN and Git: {svn_file}")
-        svn_hash = self.calculate_file_hash(svn_file)
-        git_hash = self.calculate_file_hash(git_file)
+    def verify_file_content(self, svn_content: str, git_content: str) -> bool:
+        """Verify that file content matches between SVN and Git content strings"""
+        logging.debug("Calculating content hashes for comparison")
+        svn_hash = hashlib.md5(svn_content.encode()).hexdigest()
+        git_hash = hashlib.md5(git_content.encode()).hexdigest()
+        return svn_hash == git_hash
         match = svn_hash == git_hash
         if not match:
             logging.debug(
@@ -128,7 +128,7 @@ class SVNToGitMigrator:
         os.chdir(self.git_repo_path)
         try:
             logging.info("Initializing git-svn repository")
-            subprocess.run(["git", "svn", "init", self.svn_repo_url], check=True)
+            subprocess.run(["git", "svn", "init", self.svn_repo_url, "--stdlayout"], check=True)
             logging.info("Fetching SVN history")
             subprocess.run(["git", "svn", "fetch"], check=True)
             logging.info("Git repository successfully initialized")
@@ -156,11 +156,25 @@ class SVNToGitMigrator:
     def get_git_commit_for_revision(self, rev_num: str) -> str:
         """Get Git commit hash for SVN revision number"""
         logging.info(f"Looking up Git commit for SVN revision {rev_num}")
+        
+        # Try to get cached result
+        cmd = ["git", "log", "--pretty=format:%H", f"--grep=git-svn-id.*@{rev_num}"]
+        cache_key = self.cache_manager.get_cache_key(cmd)
+        cached_result = self.cache_manager.get_cached_result(cache_key)
+        
+        if cached_result:
+            logging.info(f"Using cached Git commit hash for revision {rev_num}")
+            return cached_result.get('commit')
+            
+        logging.info(f"No cached data found, querying Git for revision {rev_num}")
         commit = subprocess.run(
-            ["git", "log", "--pretty=format:%H", f"--grep=git-svn-id.*@{rev_num}"],
+            cmd,
             capture_output=True,
             text=True,
         ).stdout.strip()
+        
+        # Cache the result
+        self.cache_manager.cache_result(cache_key, {'commit': commit})
         if not commit:
             logging.warning(f"No Git commit found for SVN revision {rev_num}")
         else:
@@ -170,11 +184,24 @@ class SVNToGitMigrator:
     def verify_commit_message(self, git_commit: str, svn_message: str) -> bool:
         """Verify commit message matches between Git and SVN"""
         logging.info(f"Verifying commit message for Git commit {git_commit}")
-        git_msg = subprocess.run(
-            ["git", "log", "-1", "--pretty=format:%s%n%b", git_commit],
-            capture_output=True,
-            text=True,
-        ).stdout
+        
+        # Try to get cached result
+        cmd = ["git", "log", "-1", "--pretty=format:%s%n%b", git_commit]
+        cache_key = self.cache_manager.get_cache_key(cmd)
+        cached_result = self.cache_manager.get_cached_result(cache_key)
+        
+        if cached_result:
+            logging.info(f"Using cached commit message for {git_commit}")
+            git_msg = cached_result.get('message')
+        else:
+            logging.info(f"No cached data found, getting commit message from Git")
+            git_msg = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+            ).stdout
+            # Cache the result
+            self.cache_manager.cache_result(cache_key, {'message': git_msg})
         match = svn_message.strip() in git_msg
         if not match:
             logging.warning(f"Commit message mismatch for Git commit {git_commit}")
@@ -205,48 +232,53 @@ class SVNToGitMigrator:
     ) -> bool:
         """Verify a single file matches between Git and SVN"""
         logging.info(f"Verifying single file: {file_path} at revision {rev_num}")
-        svn_export = f"/tmp/svn_export_{rev_num}"
-        git_export = f"/tmp/git_export_{rev_num}"
+        
+        # Try to get cached SVN content
+        svn_cmd = ["svn", "cat", "-r", rev_num, f"{self.svn_repo_url}/{file_path}"]
+        svn_cache_key = self.cache_manager.get_cache_key(svn_cmd)
+        svn_cached = self.cache_manager.get_cached_result(svn_cache_key)
+        
+        if svn_cached:
+            logging.info(f"Using cached SVN content for {file_path}@{rev_num}")
+            svn_content = svn_cached.get('content')
+        else:
+            logging.info(f"Getting SVN content for {file_path}@{rev_num}")
+            svn_content = subprocess.run(
+                svn_cmd,
+                capture_output=True,
+                text=True,
+                check=True
+            ).stdout
+            self.cache_manager.cache_result(svn_cache_key, {'content': svn_content})
 
-        try:
-            logging.debug("Creating temporary files for comparison")
-            # Get SVN revisions before migration
-            logging.debug(f"Exporting file from SVN: {file_path}@{rev_num}")
-            subprocess.run(
-                [
-                    "svn",
-                    "export",
-                    "-r",
-                    rev_num,
-                    f"{self.svn_repo_url}/{file_path}",
-                    svn_export,
-                ],
-                check=True,
+        # Try to get cached Git content
+        git_cmd = ["git", "show", f"{git_commit}:{file_path}"]
+        git_cache_key = self.cache_manager.get_cache_key(git_cmd)
+        git_cached = self.cache_manager.get_cached_result(git_cache_key)
+        
+        if git_cached:
+            logging.info(f"Using cached Git content for {file_path}@{git_commit}")
+            git_content = git_cached.get('content')
+        else:
+            logging.info(f"Getting Git content for {file_path}@{git_commit}")
+            git_content = subprocess.run(
+                git_cmd,
+                capture_output=True,
+                text=True,
+                check=True
+            ).stdout
+            self.cache_manager.cache_result(git_cache_key, {'content': git_content})
+
+        result = self.verify_file_content(svn_content, git_content)
+
+        if not result:
+            logging.error(
+                f"File content mismatch for {file_path} at revision {rev_num}"
             )
+        else:
+            logging.debug(f"File content verified successfully: {file_path}")
 
-            logging.debug(f"Extracting file from Git commit: {git_commit}:{file_path}")
-            subprocess.run(
-                ["git", "show", f"{git_commit}:{file_path}", f"> {git_export}"],
-                shell=True,
-                check=True,
-            )
-
-            result = self.verify_file_content(svn_export, git_export)
-
-            if not result:
-                logging.error(
-                    f"File content mismatch for {file_path} at revision {rev_num}"
-                )
-            else:
-                logging.debug(f"File content verified successfully: {file_path}")
-
-            return result
-
-        finally:
-            if os.path.exists(svn_export):
-                os.remove(svn_export)
-            if os.path.exists(git_export):
-                os.remove(git_export)
+        return result
 
     def migrate(self) -> bool:
         """Perform the SVN to Git migration with verification"""

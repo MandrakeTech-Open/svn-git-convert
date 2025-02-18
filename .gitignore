@@ -6,3 +6,4 @@
 data
 .ash_history
 .gitconfig
+__pycache__

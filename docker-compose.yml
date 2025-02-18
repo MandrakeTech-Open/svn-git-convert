@@ -8,5 +8,5 @@ services:
       dockerfile: Dockerfile
       context: .
     volumes:
-      - ./:/root/
-      - root-data:/root/data
+      - ./:/workspace/
+      - root-data:/workspace/data
