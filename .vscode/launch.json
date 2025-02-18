@@ -1,7 +1,7 @@
 {
     "configurations": [
         {
-            "name": "SVN Git Script - svn repo",
+            "name": "SVN Git Script - tortoisesvn - r25000",
             "type": "debugpy",
             "request": "launch",
             "program": "svn_to_git_migrator.py",
@@ -9,7 +9,18 @@
             "args": [
                 "https://svn.code.sf.net/p/tortoisesvn/code",
                 "/root/data/repo"
-            ]
+            ],
+        },
+        {
+            "name": "SVN Git Script - processhacker - r6300",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "svn_to_git_migrator.py",
+            "console": "integratedTerminal",
+            "args": [
+                "https://svn.code.sf.net/p/processhacker/code/",
+                "/root/data/repo"
+            ],
         }
     ]
 }

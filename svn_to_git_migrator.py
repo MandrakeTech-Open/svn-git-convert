@@ -10,7 +10,7 @@ from cache_manager import CacheManager
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 
@@ -59,7 +59,7 @@ class SVNToGitMigrator:
                 if line.strip() == "-" * 72 and current_revision:
                     revisions.append(current_revision)
                     current_revision = {}
-        
+            
         # Cache the parsed revisions
         self.cache_manager.cache_result(cache_key, revisions)
         return revisions
@@ -111,12 +111,6 @@ class SVNToGitMigrator:
         svn_hash = hashlib.md5(svn_content.encode()).hexdigest()
         git_hash = hashlib.md5(git_content.encode()).hexdigest()
         return svn_hash == git_hash
-        match = svn_hash == git_hash
-        if not match:
-            logging.debug(
-                f"File content mismatch - SVN hash: {svn_hash}, Git hash: {git_hash}"
-            )
-        return match
 
     def init_git_repo(self):
         """Initialize the Git repository"""
@@ -287,6 +281,9 @@ class SVNToGitMigrator:
             logging.info("Retrieving SVN revisions...")
             self.svn_revisions = self.get_svn_revisions()
 
+            max_rev = max(int(rev['revision']) for rev in self.svn_revisions)
+            logging.info(f"Maximum SVN revision number: {max_rev}")
+
             # Initialize git-svn
             if not os.path.exists(self.git_repo_path):
                 logging.info("Initializing new Git repository...")
@@ -317,6 +314,8 @@ class SVNToGitMigrator:
                     rev_num, git_commit, self.svn_revisions["changed_paths"]
                 ):
                     return False
+                
+            
             logging.info(
                 "Migration completed successfully with all verifications passed!"
             )
