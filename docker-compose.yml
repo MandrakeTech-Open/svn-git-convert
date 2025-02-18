@@ -1,0 +1,12 @@
+volumes:
+  root-data:
+
+services:
+  git-svn-migrator:
+    image: localhost/python-dev
+    build:
+      dockerfile: Dockerfile
+      context: .
+    volumes:
+      - ./:/root/
+      - root-data:/root/data

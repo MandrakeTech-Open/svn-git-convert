@@ -1,0 +1,15 @@
+{
+    "configurations": [
+        {
+            "name": "SVN Git Script - svn repo",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "svn_to_git_migrator.py",
+            "console": "integratedTerminal",
+            "args": [
+                "https://svn.apache.org/repos/asf/subversion",
+                "/root/data/repo"
+            ]
+        }
+    ]
+}
