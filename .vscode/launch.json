@@ -8,7 +8,7 @@
             "console": "integratedTerminal",
             "args": [
                 "https://svn.code.sf.net/p/tortoisesvn/code",
-                "/root/data/repo"
+                "/workspace/data/repo"
             ],
         },
         {
@@ -19,7 +19,7 @@
             "console": "integratedTerminal",
             "args": [
                 "https://svn.code.sf.net/p/processhacker/code/",
-                "/root/data/repo"
+                "/workspace/data/repo"
             ],
         }
     ]
