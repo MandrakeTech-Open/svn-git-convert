@@ -2,10 +2,18 @@ volumes:
   root-data:
 
 services:
+  svn-server:
+    image: localhost/svn-server
+    hostname: svn-server
+    pull_policy: never
+    build:
+      dockerfile: Dockerfile.svn
+      context: .
   git-svn-migrator:
     image: localhost/python-dev
+    pull_policy: never
     build:
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.python
       context: .
     volumes:
       - ./:/workspace/

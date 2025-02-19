@@ -1,0 +1,29 @@
+FROM alpine:3.21
+
+ENV SVN_LISTEN_PORT=3690
+ENV SVN_TEST_REPO=myrepo
+
+RUN apk add --no-cache subversion \
+    && mkdir -p /home/svn \
+    && svnadmin create /home/svn/${SVN_TEST_REPO} \
+    && cat <<EOF > /home/svn/${SVN_TEST_REPO}/conf/svnserve.conf
+[general]
+anon-access = write
+auth-access = write
+password-db = passwd
+EOF
+
+RUN cat <<EOF > /usr/bin/docker-init.sh
+echo "Use with: svn checkout svn://\$(hostname):${SVN_LISTEN_PORT}/${SVN_TEST_REPO}"
+/usr/bin/svnserve -d --foreground --root /home/svn --listen-port ${SVN_LISTEN_PORT}
+EOF
+
+RUN chmod +x /usr/bin/docker-init.sh
+
+VOLUME ["/home/svn"]
+
+EXPOSE ${SVN_LISTEN_PORT}
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 CMD svn info svn://localhost:${SVN_LISTEN_PORT}/${SVN_TEST_REPO} || exit 1
+
+CMD /usr/bin/docker-init.sh

@@ -1,6 +1,17 @@
 {
     "configurations": [
         {
+            "name": "SVN Git Script - test - myrepo",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "svn_to_git_migrator.py",
+            "console": "integratedTerminal",
+            "args": [
+                "svn://svn-server:3690/myrepo",
+                "/workspace/data/repo"
+            ],
+        },
+        {
             "name": "SVN Git Script - tortoisesvn - r25000",
             "type": "debugpy",
             "request": "launch",
@@ -12,7 +23,7 @@
             ],
         },
         {
-            "name": "SVN Git Script - processhacker - r6300",
+            "name": "SVN Git Script - processhacker - r6350",
             "type": "debugpy",
             "request": "launch",
             "program": "svn_to_git_migrator.py",

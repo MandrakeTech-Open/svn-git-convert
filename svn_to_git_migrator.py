@@ -2,7 +2,7 @@
 
 import os
 import sys
-import subprocess
+from subprocess import CalledProcessError
 import hashlib
 import logging
 import xml.etree.ElementTree as ET
@@ -45,17 +45,9 @@ class SVNToGitMigrator:
         """Get all SVN revisions with their metadata"""
         logging.info("Retrieving SVN revision history")
         cmd = ["svn", "log", "--xml", "--verbose", self.svn_repo_url]
-        
-        # Try to get cached result
-        cache_key = self.cache_manager.get_cache_key(cmd)
-        cached_result = self.cache_manager.get_cached_result(cache_key)
-        logging.debug(f"Cache key: {cache_key}, found cached result {cached_result != None}")
-        if cached_result:
-            logging.info("Using cached SVN revision history")
-            return cached_result
             
-        logging.info("No cached data found, querying SVN server")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        logging.info("Querying SVN server")
+        result = self.cache_manager.cached_run(cmd)
 
         if result.returncode != 0:
             logging.error(f"Failed to get SVN log: {result.stderr}")
@@ -85,8 +77,6 @@ class SVNToGitMigrator:
             
             revisions.append(revision)
 
-        # Cache the parsed revisions
-        self.cache_manager.cache_result(cache_key, revisions)
         return revisions
 
     
@@ -98,28 +88,28 @@ class SVNToGitMigrator:
         git_hash = hashlib.md5(git_content.encode()).hexdigest()
         return svn_hash == git_hash
 
-    def init_git_repo(self):
-        """Initialize the Git repository"""
-        logging.info(f"Initializing Git repository at {self.git_repo_path}")
+    def clone_git_svn_repo(self):
+        """Clone the Git repository"""
+        logging.info(f"Initializing Git SVN repository at {self.git_repo_path}")
         if not os.path.exists(self.git_repo_path):
             logging.debug(f"Creating directory {self.git_repo_path}")
             os.makedirs(self.git_repo_path)
         logging.debug(f"Changing to directory {self.git_repo_path}")
         os.chdir(self.git_repo_path)
         try:
-            logging.info("Clone git-svn repository")
-            subprocess.run(["git", "svn", "clone", self.svn_repo_url, "--stdlayout"], check=True)
-            logging.info("Git repository successfully initialized")
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Failed to initialize Git repository: {str(e)}")
-            raise
+            logging.info("Clone Git SVN repository")
+            cmd = ["git", "svn", "clone", self.svn_repo_url, "--stdlayout"]
+            self.cache_manager.cached_run(cmd, check=True)
+            logging.info("Git SVN repository successfully Cloned")
+        except CalledProcessError as e:
+            logging.error(f"Failed to Clone Git SVN repository: {str(e)}")
+            raise e
 
     def verify_revision_count(self) -> bool:
         """Verify that Git and SVN have same number of revisions"""
         logging.info("Verifying revision count between Git and SVN")
-        git_log = subprocess.run(
-            ["git", "log", "--all", "--pretty=format:%H %s"], capture_output=True, text=True
-        ).stdout
+        cmd = ["git", "log", "--all", "--pretty=format:\"%H %s\""]
+        git_log = self.cache_manager.cached_run(cmd).stdout
 
         git_commits = git_log.strip().split("\n")
         if len(git_commits) != len(self.svn_revisions):
@@ -135,24 +125,10 @@ class SVNToGitMigrator:
         """Get Git commit hash for SVN revision number"""
         logging.info(f"Looking up Git commit for SVN revision {rev_num}")
         
-        # Try to get cached result
-        cmd = ["git", "log", "--pretty=format:%H", f"--grep=git-svn-id.*@{rev_num}"]
-        cache_key = self.cache_manager.get_cache_key(cmd)
-        cached_result = self.cache_manager.get_cached_result(cache_key)
+        cmd = ["git", "log", "--pretty=format:%H", f"--grep=git-svn-id.*@{rev_num}"]            
+        logging.info(f"Querying Git for revision {rev_num}")
+        commit = self.cache_manager.cached_run(cmd).stdout
         
-        if cached_result:
-            logging.info(f"Using cached Git commit hash for revision {rev_num}")
-            return cached_result.get('commit')
-            
-        logging.info(f"No cached data found, querying Git for revision {rev_num}")
-        commit = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        
-        # Cache the result
-        self.cache_manager.cache_result(cache_key, {'commit': commit})
         if not commit:
             logging.warning(f"No Git commit found for SVN revision {rev_num}")
         else:
@@ -163,23 +139,10 @@ class SVNToGitMigrator:
         """Verify commit message exactly matches between Git and SVN"""
         logging.info(f"Verifying commit message for Git commit {git_commit}")
         
-        # Try to get cached result
         cmd = ["git", "log", "-1", "--pretty=format:%s%n%b", git_commit]
-        cache_key = self.cache_manager.get_cache_key(cmd)
-        cached_result = self.cache_manager.get_cached_result(cache_key)
-        
-        if cached_result:
-            logging.info(f"Using cached commit message for {git_commit}")
-            git_msg = cached_result.get('message')
-        else:
-            logging.info(f"No cached data found, getting commit message from Git")
-            git_msg = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-            ).stdout
-            # Cache the result
-            self.cache_manager.cache_result(cache_key, {'message': git_msg})
+
+        logging.info(f"Getting commit message from Git")
+        git_msg = self.cache_manager.cached_run(cmd).stdout
             
         # Normalize both messages by stripping whitespace and comparing exactly
         git_msg = ' '.join(git_msg.strip().split())
@@ -188,8 +151,8 @@ class SVNToGitMigrator:
         
         if not match:
             logging.warning(f"Commit message mismatch for Git commit {git_commit}")
-            logging.debug(f"SVN message: {svn_message}")
-            logging.debug(f"Git message: {git_msg}")
+            logging.info(f"SVN message: {svn_message}")
+            logging.info(f"Git message: {git_msg}")
         else:
             logging.debug("Commit message verified successfully")
             # Store the mapping when messages match
@@ -224,39 +187,15 @@ class SVNToGitMigrator:
         
         # Try to get cached SVN content
         svn_cmd = ["svn", "cat", "-r", rev_num, f"{self.svn_repo_url}/{file_path}"]
-        svn_cache_key = self.cache_manager.get_cache_key(svn_cmd)
-        svn_cached = self.cache_manager.get_cached_result(svn_cache_key)
         
-        if svn_cached:
-            logging.info(f"Using cached SVN content for {file_path}@{rev_num}")
-            svn_content = svn_cached.get('content')
-        else:
-            logging.info(f"Getting SVN content for {file_path}@{rev_num}")
-            svn_content = subprocess.run(
-                svn_cmd,
-                capture_output=True,
-                text=True,
-                check=True
-            ).stdout
-            self.cache_manager.cache_result(svn_cache_key, {'content': svn_content})
+        logging.info(f"Getting SVN content for {file_path}@{rev_num}")
+        svn_content = self.cache_manager.cached_run(svn_cmd, check=True).stdout
 
         # Try to get cached Git content
         git_cmd = ["git", "show", f"{git_commit}:{file_path}"]
-        git_cache_key = self.cache_manager.get_cache_key(git_cmd)
-        git_cached = self.cache_manager.get_cached_result(git_cache_key)
         
-        if git_cached:
-            logging.info(f"Using cached Git content for {file_path}@{git_commit}")
-            git_content = git_cached.get('content')
-        else:
-            logging.info(f"Getting Git content for {file_path}@{git_commit}")
-            git_content = subprocess.run(
-                git_cmd,
-                capture_output=True,
-                text=True,
-                check=True
-            ).stdout
-            self.cache_manager.cache_result(git_cache_key, {'content': git_content})
+        logging.info(f"Getting Git content for {file_path}@{git_commit}")
+        git_content = self.cache_manager.cached_run(git_cmd, check=True).stdout
 
         result = self.verify_file_content(svn_content, git_content)
 
@@ -278,10 +217,11 @@ class SVNToGitMigrator:
             
             logging.info("Retrieving SVN revisions...")
             self.svn_revisions = self.get_svn_revisions()
+            logging.info(f"Retrieved {len(self.svn_revisions)} SVN revisions")
 
             if not os.path.exists(self.git_repo_path):
                 logging.info("Initializing new Git repository...")
-                self.init_git_repo()
+                self.clone_git_svn_repo()
 
             logging.info(f"Changing to Git repository directory: {self.git_repo_path}")
             os.chdir(self.git_repo_path)
@@ -300,7 +240,7 @@ class SVNToGitMigrator:
                 # Get Git commit for SVN revision
                 try:
                     git_commit = self.get_git_commit_for_revision(rev_num)
-                except subprocess.CalledProcessError as e:
+                except CalledProcessError as e:
                     logging.error(f"Could not find Git commit for SVN revision {rev_num}")
                     logging.debug(f"Error: {e}")
                     return False
