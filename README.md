@@ -25,3 +25,6 @@ This tool helps migrate SVN repositories to Git while ensuring data integrity th
 migrator = SVNToGitMigrator(svn_repo_url, git_repo_path)
 success = migrator.migrate()
 ```
+
+# initialize the subversion repo
+SVN_URL="svn://svn-server/myrepo" ./init-test-svn.sh
