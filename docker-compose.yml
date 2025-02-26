@@ -18,3 +18,4 @@ services:
     volumes:
       - ./:/workspace/
       - root-data:/workspace/data
+      - ./bash_history:/root/.bash_history

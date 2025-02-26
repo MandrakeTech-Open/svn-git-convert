@@ -8,7 +8,7 @@ from subprocess import CalledProcessError
 import hashlib
 import logging
 import xml.etree.ElementTree as ET
-from typing import Dict, List
+from typing import Dict, List, NamedTuple
 from cache_manager import CacheManager
 
 # Configure logging
@@ -27,7 +27,14 @@ logging.getLogger().setLevel(logging.DEBUG)
 logging.getLogger().addHandler(file_handler)
 logging.getLogger().addHandler(console_handler)
 
+class RevisionInfo(NamedTuple):
+    rev_num: str
+    message: str
 
+class MappingErrors(NamedTuple):
+    missing: List[RevisionInfo]
+    mismatch: List[RevisionInfo]
+    file_mismatch: List[RevisionInfo]
 
 class SVNToGitMigrator:
     svn_repo_url: str
@@ -208,7 +215,7 @@ class SVNToGitMigrator:
             logging.warning(f"No Git commit found for SVN revision {rev_num}")
             return None
         
-        logging.info(f"Found Git commit {commit_for_rev[0]} for revision {rev_num}")
+        logging.debug(f"Found Git commit {commit_for_rev[0]} for revision {rev_num}")
         return commit_for_rev[0]
 
     def verify_changed_files(
@@ -237,8 +244,7 @@ class SVNToGitMigrator:
                     logging.warning(f"File verification failed: {file_path}")
                     return False
                 
-        logging.debug("All changed files verified successfully for revision {rev_num} and Git commit {git_commit}")
-
+        logging.debug(f"All changed files verified successfully for revision {rev_num} and Git commit {git_commit}")
         return True
 
     def _verify_single_file(
@@ -270,8 +276,47 @@ class SVNToGitMigrator:
 
         return result
 
+    def has_errors(self, mapping_error: MappingErrors) -> bool:
+        return len(mapping_error.missing) > 0 or len(mapping_error.mismatch) > 0 or len(mapping_error.file_mismatch) > 0
+
+    def verify_svn_git_mapping(self) -> MappingErrors:
+        """Verify SVN to Git mapping of revisions"""
+        missing_revisions = []
+        mismatch_revisions = []
+        file_mismatch_revisions = []
+
+        # Verify each revision
+        for revision in self.svn_revisions:
+            rev_num = revision["revision"]
+            message = revision["message"]
+            changed_paths = revision["changed_paths"]
+            
+            # Get Git commit for SVN revision
+            git_commit = self.get_git_commit_for_revision(rev_num)
+            if git_commit is None:
+                logging.error(f"Could not find Git commit for SVN revision {rev_num}: {message}")
+                missing_revisions.append((rev_num, message))
+                continue
+            
+            logging.debug(f"Git commit for revision {rev_num}: {git_commit['hash']}")
+
+            # Verify commit message and track mapping
+            if git_commit["message"] != message:
+                logging.error(f"Commit message verification failed for revision {rev_num}")
+                logging.error(f"Expected: [{message}]")
+                logging.error(f"Actual: [{git_commit['message']}]")
+                mismatch_revisions.append((rev_num, message, git_commit["message"]))
+
+            # Verify files for this revision
+            if not self.verify_changed_files(rev_num, git_commit, changed_paths):
+                logging.error(f"File verification failed for revision {rev_num}")
+                file_mismatch_revisions.append((rev_num, message, git_commit["message"]))
+
+        return MappingErrors(missing=missing_revisions, mismatch=mismatch_revisions, file_mismatch=file_mismatch_revisions)
+        
     def migrate(self) -> bool:
         """Perform the SVN to Git migration with verification"""
+        success = True
         logging.info("Starting SVN to Git migration process")
         try:            
             self.svn_revisions = self.get_svn_revisions()
@@ -290,41 +335,25 @@ class SVNToGitMigrator:
 
             # Verify revision count matches
             if not self.verify_revision_count():
-                logging.error("Revision count verification failed. Lets find which one is missing.")
+                logging.error("Revision count verification failed.")
+                success = False
                 
             # Verify each revision
-            for revision in self.svn_revisions:
-                rev_num = revision["revision"]
-                message = revision["message"]
-                changed_paths = revision["changed_paths"]
+            mapping_errors = self.verify_svn_git_mapping()
+            if not self.has_errors(mapping_errors):
+                logging.error("SVN to Git mapping verification failed.")
+                # write mapping errors to log
+                logging.error(f"Missing revisions: {mapping_errors.missing}")
+                logging.error(f"Mismatch revisions: {mapping_errors.mismatch}")
+                logging.error(f"File mismatch revisions: {mapping_errors.file_mismatch}")
+                success = False
                 
-                # Get Git commit for SVN revision
-                git_commit = self.get_git_commit_for_revision(rev_num)
-                if git_commit is None:
-                    logging.error(f"Could not find Git commit for SVN revision {rev_num}")
-                    continue
-                
-                logging.debug(f"Git commit for revision {rev_num}: {git_commit['hash']}")
-
-                # Verify commit message and track mapping
-                if git_commit["message"] != message:
-                    logging.error(f"Commit message verification failed for revision {rev_num}")
-                    logging.error(f"Expected: [{message}]")
-                    logging.error(f"Actual: [{git_commit['message']}]")
-                    return False
-
-                # Verify files for this revision
-                if not self.verify_changed_files(rev_num, git_commit, changed_paths):
-                    logging.error(f"File verification failed for revision {rev_num}")
-                    return False
-                
-                logging.debug(f"Successfully verified revision {rev_num} (Git commit: {git_commit['hash']})")
-                
+            if success:
+                logging.info("Migration completed successfully!")
+            else:
+                logging.error("Migration failed.")
             
-            logging.info(
-                "Migration completed successfully with all verifications passed!"
-            )
-            return True
+            return success
         except CalledProcessError as cpe:
             logging.error(f"Error during migration: {str(cpe.stderr)}")
             return False
